@@ -1,0 +1,560 @@
+/********************************************************预编译********************************************************/
+
+/**调用库**/
+#include <iostream>
+#include <cmath>
+#include <fstream>
+
+/**宏定义**/
+#define pi 3.14159265
+
+using namespace std;
+/*******************************************************函数声明********************************************************/
+
+double SaturatedLPT(double Tsat);
+double SaturatedGPT(double Tsat);
+double SaturatedLHT(double Tsat);
+double SaturatedGHT(double Tsat);
+
+double SaturatedLTP(double Psat);
+double SaturatedGTP(double Psat);
+double SaturatedLTH(double hL);
+double SaturatedLST(double T);
+
+double SaturatedGRouT(double Tsat);
+double SaturatedLRouT(double Tsat);
+
+double TwoPhaseHX(double x, double Psat);
+double TwoPhaseXH(double h, double Psat);
+double TwoPhaseTH(double h, double Psat);
+double TwoPhaseSH(double h, double Psat);
+
+double SuperHeatedHT(double P, double T);
+double SuperHeatedTH(double P, double h);
+double SuperHeatedST(double P, double T);
+double SuperHeatedTS(double P, double s);
+double SuperHeatedCpT(double P, double T);
+
+double SubCooledHT(double P, double T);
+double SubCooledTH(double P, double h);
+double SubCooledCpT(double P, double T);
+
+inline double SaturatedLUT(double Tr);
+inline double SaturatedGUT(double Tr);
+
+
+inline double T2Psat(double T);
+inline double Psat2T(double Psat);
+inline double Update_Hs(int ntx, int nf, int ntz, double la,double ua);
+inline double Update_dltP(int ntx, int nf, int ntz, double la, double ua, double Ga);
+inline double Update_dltPr(double Tr, double Gr, double xr_start);
+inline double Update_Frict_TwoPhase(double Tr, double Gr, double xr);
+
+double first_modified_Bessel(int n,double x);
+double second_modified_Bessel(int n,double x);
+
+/*****************************************************全局变量定义****************************************************/
+
+double Patm = 1.01325e5;
+double g = 9.8;
+double yt_CM = 0.85;
+double ytele_CM = 0.9;
+double yt_DF = 0.35;
+
+/**物性常数**/
+double roua = 1.2;
+double mua = 1.845e-5;                                                        /**空气粘度**/
+double ka = 0.0321;                                                           /**空气导热系数**/
+double cpa = 1035.0, cpv = 1864.0;
+double cpw = 4200.0;
+double hfg = 2501000;
+//double hs0 = 50;
+double kf = 203.0, kt = 407.0;
+double kw = 0.6;
+
+/**几何常数**/
+
+double tf = 1.5e-4, Pf = 2.5e-3;
+double tw = 1.27e-4;
+double dlx = 22.5e-3, dlz = 24e-3;                                             /**微元横截面长、宽**/
+double ro = 4.76e-3, ri = 3.925e-3;                                            /**管外径，管内径**/
+double r1 = ro, r2 = sqrt(dlx * dlz / pi);                                          /**微元截面等效半径**/
+
+int ntz_EV = 12, ntx_EV = 4, nf_EV = 128;                                               /**换热器管排数12（列数为4），翅片数128**/
+double Lx_EV = dlx * ntx_EV;
+double Af_EV = Pf * nf_EV * dlz * ntz_EV;                                                                     /**迎风面积**/
+double Ato_EV = 2 * pi * ro * (Pf - tf) * nf_EV * ntx_EV * ntz_EV, Afo_EV = 2 * (dlx * dlz - pi * pow (ro,2)) * nf_EV * ntx_EV * ntz_EV, Ao_EV = Ato_EV + Afo_EV;                             /**空气测换热面积**/
+double lt_EV = Pf * nf_EV * ntx_EV * ntz_EV, Ati_EV = 2 * pi * ri * lt_EV;                                                                                                                       /**制冷剂侧换热面积**/
+double Va_EV = dlx * dlz * lt_EV, la_EV = Va_EV / Ao_EV;                                                                                                                          /**微元体积**/
+
+int ntz_CD = 12, ntx_CD = 4, nf_CD = 256;                                               /**换热器管排数12（列数为4），翅片数128**/
+double Lx_CD = dlx * ntx_CD;
+double Af_CD = Pf * nf_CD * dlz * ntz_CD;                                                                     /**迎风面积**/
+double Ato_CD = 2 * pi * ro * (Pf - tf) * nf_CD * ntx_CD * ntz_CD, Afo_CD = 2 * (dlx * dlz - pi * pow (ro,2)) * nf_CD * ntx_CD * ntz_CD, Ao_CD = Ato_CD + Afo_CD;                             /**空气测换热面积**/
+double lt_CD = Pf * nf_CD * ntx_CD * ntz_CD, Ati_CD = 2 * pi * ri * lt_CD;                                                                                                                       /**制冷剂侧换热面积**/
+double Va_CD = dlx * dlz * lt_CD, la_CD = Va_CD / Ao_CD;
+
+/**可能要变化的量**/
+double Q_total = 2e3;
+double QL_ratio = 0.4;
+
+double T_OA = 35, Y_OA = 21;
+double T_RA = 27, Y_RA = 10;
+
+double ua_EV, ua_CD;
+double GOA_EV = 0.03;
+
+/********************************************************主函数********************************************************/
+
+int main(){
+
+    ofstream outfile;
+    outfile.open("Exergy Consumption.txt");
+
+    double i_OA, i_RA;
+    double Ga_EV, OA_ratio_EV;
+    double ia_EVin, Ya_EVin, Ta_EVin;
+
+    double Ga_CD, RA_ratio_CD;
+    double ia_CDin, Ya_CDin, Ta_CDin;
+
+    double Q_L;
+    double i_SA, Y_SA, Psat_SA, T_SA;
+    double Ta_EVout, ia_EVout, Ya_EVout, Pa_EVout;
+
+    double Psat_EVin, Ta_EVin_DEW, ia_EVin_DEW, QL_ratio_QS_wet;
+    double hs_EV, hr_EV, Uo_EVdry;
+    double m_EVdry, c_Bessel_dry, yt_EVdry;
+    double heq_EVwet, Uo_EVwet;
+    double m_EVwet, c_Bessel_wet, yt_EVwet_eq, yt_EVwet;
+
+    double Tr_EV, cp_eq_EV;
+    double Tr_EV_try1, Ta_EVout_try1;
+    double Tr_EV_try2, Ta_EVout_try2;
+    double Lx_EVdry, Tr_EV_temp, Tr_EV_max;
+    bool flag_Tr_EV;
+    int times_Tr_EV;
+
+    double hs_CD, hr_CD, m_CD, c_Bessel_CD, yt_CD, Uo_CD;
+
+    double pr_EVout, ir_EVout, sr_EVout, pr_EVin;
+    double pr_CDout, ir_CDout, pr_CDin, Tr_CMout_ideal, ir_CMout_ideal, ir_CMout, Tr_CMout;
+    double Gr, Qr_CD, cp_eq_CD, Tr_CD;
+    double Tr_CD_try;
+    bool flag_Tr_CD;
+    int times_Tr_CD;
+    bool flag_Gr, flag_xr;
+    int times_Gr, times_xr;
+    double Gr_try, xr_EVin, xr_EVin_try;
+
+    double Y_OA_sat, Psat_OA;
+    double EXa_RA_EV, EXa_OA_EV, EXa_EVin, dltEX_mix1;
+    double ir_ref, sr_ref;
+    double sr_EVin;
+    double EXr_EVin, EXa_EVout, EXr_EVout, EXw_EVout, dltEX_EV;
+    double EXa_RA_CD, EXa_OA_CD, EXa_CDin, dltEX_mix2;
+    double sr_CMout, sr_CDout_sat, sr_CDout;
+    double Ta_CDout;
+    double EXr_CDin, EXr_CDout, EXa_CDout, dltEX_CD;
+    double P_CM, dltEX_CM;
+    double dltEX_TV;
+    double EXa_SA, dltEX_HT;
+    double P_DF_EV, P_DF_CD;
+
+    double U_ratio;
+
+    for (ua_EV = 0.4; ua_EV <= 0.65; ua_EV = ua_EV + 0.2){
+    for (U_ratio = 1, ua_CD = U_ratio * ua_EV; ua_CD < min(8.0 * ua_EV, 4.0); U_ratio = U_ratio + 0.2, ua_CD = U_ratio * ua_EV){
+
+    if(ua_CD < 1.45)continue;
+
+    /**1.1.蒸发侧新风与回风混合得到的混风状态，输入T_OA, Y_OA, T_RA, Y_RA, ua_EV, GOA_EV**/
+    i_OA = cpa * T_OA + Y_OA / 1000 * (hfg + cpv * T_OA);
+    i_RA = cpa * T_RA + Y_RA / 1000 * (hfg + cpv * T_RA);
+    Ga_EV = ua_EV * Af_EV * roua;
+    OA_ratio_EV = GOA_EV / Ga_EV;
+    ia_EVin = OA_ratio_EV * i_OA + (1 - OA_ratio_EV) * i_RA;
+    Ya_EVin = OA_ratio_EV * Y_OA + (1 - OA_ratio_EV) * Y_RA;
+    Ta_EVin = (ia_EVin - Ya_EVin / 1000 * hfg) / (cpa + cpv * Ya_EVin / 1000);
+
+    /**1.2 冷凝侧新风与回风混合得到的混风状态，输入ua_CD, GOA_EV, T_OA, Y_OA, T_RA, Y_RA**/
+    Ga_CD = ua_CD * Af_CD * roua;
+    RA_ratio_CD = GOA_EV / Ga_CD;
+    ia_CDin = (1 - RA_ratio_CD) * i_OA + RA_ratio_CD * i_RA;
+    Ya_CDin = (1 - RA_ratio_CD) * Y_OA + RA_ratio_CD * Y_RA;
+    Ta_CDin = (ia_CDin - Ya_CDin / 1000 * hfg) / (cpa + cpv * Ya_CDin / 1000);
+    cout<<"OA and RA condition!"<<'\t'<<Y_OA<<'\t'<<T_OA<<'\t'<<Y_RA<<'\t'<<T_RA<<endl;
+    cout<<"HX inlet air amount!"<<'\t'<<GOA_EV<<'\t'<<Ga_EV<<'\t'<<Ga_CD<<'\t'<<OA_ratio_EV<<'\t'<<RA_ratio_CD<<endl;
+    cout<<"HX inlet air condition!"<<'\t'<<Ya_EVin<<'\t'<<Ta_EVin<<'\t'<<Ya_CDin<<'\t'<<Ta_CDin<<endl;
+
+    /**2.1 根据风量和室内负荷计算蒸发器出口及送风状态，输入Ga_EV, Q_total, QL_ratio, T_RA, Y_RA**/
+    Q_L = Q_total * QL_ratio;
+    i_SA = - Q_total / Ga_EV + i_RA;
+    Y_SA = - Q_L / Ga_EV / hfg * 1000 + Y_RA;
+    T_SA = (i_SA - Y_SA / 1000 * hfg) / (cpa + cpv * Y_SA / 1000);
+    Psat_SA = Patm * Y_SA / (622 + Y_SA);
+    Ta_EVout = min(T_SA, Psat2T(Psat_SA));
+    Pa_EVout = T2Psat(Ta_EVout);
+    Ya_EVout = 622 / (Patm / Pa_EVout - 1);
+    ia_EVout = cpa * Ta_EVout + Ya_EVout / 1000 * (hfg + cpv * Ta_EVout);
+    if(T_SA < Ta_EVout)cout<<"QL_ratio_QS error!!!"<<endl;
+    cout<<"EV outlet air condition!"<<'\t'<<Ya_EVout<<'\t'<<Pa_EVout<<'\t'<<Ta_EVout<<endl;
+    cout<<"EV outlet & SA air temperature!"<<'\t'<<Ta_EVout<<'\t'<<T_SA<<endl;
+
+    /**2.2 计算湿工况显热潜热比，输入Ya_EVin, Ya_EVout**/
+    Psat_EVin = Patm * Ya_EVin / (622 + Ya_EVin);
+    Ta_EVin_DEW = Psat2T(Psat_EVin);
+    ia_EVin_DEW = cpa * Ta_EVin_DEW + Ya_EVin / 1000 * (hfg + cpv * Ta_EVin_DEW);
+    QL_ratio_QS_wet = 1 / ((ia_EVin_DEW - ia_EVout) / (Ya_EVin - Ya_EVout) * 1000 / hfg - 1);
+    cout<<"Wet QL_ratio_QS_wet!"<<'\t'<<QL_ratio_QS_wet<<endl;
+
+    /**3.1 蒸发器侧状态：计算蒸发温度**/
+    /**3.1.1 干工况下的翅片效率和等效热阻，输入几何参数，物性参数，ua_EV**/
+    hs_EV = Update_Hs(ntx_EV, nf_EV, ntz_EV,la_EV, ua_EV);
+    hr_EV = 100 * hs_EV;
+    m_EVdry = sqrt(2 * hs_EV / kf / tf);
+    c_Bessel_dry = (second_modified_Bessel(1,m_EVdry * r1) * first_modified_Bessel(1,m_EVdry * r2) - first_modified_Bessel(1,m_EVdry * r1) * second_modified_Bessel(1,m_EVdry * r2)) /(first_modified_Bessel(0,m_EVdry * r1) * second_modified_Bessel(1,m_EVdry * r2) + second_modified_Bessel(0,m_EVdry * r1) * first_modified_Bessel(1,m_EVdry * r2));
+    yt_EVdry = 2 * r1 / m_EVdry / (pow(r2,2) - pow(r1,2)) * c_Bessel_dry;
+    Uo_EVdry = 1 /(Ao_EV / hr_EV / Ati_EV + Ao_EV * log(ro/ri) / 2 / pi / kt / lt_EV + 1 / hs_EV / (Ato_EV / Ao_EV + Afo_EV * yt_EVdry / Ao_EV));
+    cout<<"Dry heat transfer resistance!"<<'\t'<<hs_EV<<'\t'<<m_EVdry<<'\t'<<c_Bessel_dry<<'\t'<<yt_EVdry<<'\t'<<yt_EVdry<<'\t'<<Uo_EVdry<<endl;
+
+    /**3.1.2 湿工况下的翅片效率和等效热阻，输入几何参数，物性参数，ua_EV**/
+    heq_EVwet = 1 / (1 / hs_EV + (1 + QL_ratio_QS_wet) * tw / kw);
+    m_EVwet = sqrt(2 * heq_EVwet / kf / tf);
+    c_Bessel_wet = (second_modified_Bessel(1,m_EVwet * r1) * first_modified_Bessel(1,m_EVwet * r2) - first_modified_Bessel(1,m_EVwet * r1) * second_modified_Bessel(1,m_EVwet * r2)) /(first_modified_Bessel(0,m_EVwet * r1) * second_modified_Bessel(1,m_EVwet * r2) + second_modified_Bessel(0,m_EVwet * r1) * first_modified_Bessel(1,m_EVwet * r2));
+    yt_EVwet_eq = 2 * r1 / m_EVwet / (pow(r2,2) - pow(r1,2)) * c_Bessel_wet;
+    yt_EVwet = yt_EVwet_eq - (1 - yt_EVwet_eq) * QL_ratio_QS_wet;
+    Uo_EVwet = 1 /((1 + QL_ratio_QS_wet) * (Ao_EV / hr_EV / Ati_EV + Ao_EV * log(ro/ri) / 2 / pi / kt / lt_EV) + 1 / heq_EVwet / (Ato_EV / Ao_EV + Afo_EV * yt_EVwet / Ao_EV));
+    cout<<"Wet heat transfer resistance!"<<'\t'<<heq_EVwet<<'\t'<<m_EVwet<<'\t'<<c_Bessel_wet<<'\t'<<yt_EVwet_eq<<'\t'<<yt_EVwet<<'\t'<<Uo_EVwet<<endl;
+
+    /**3.1.3 蒸发温度，输入Ya_EVin, Ta_EVin, Ta_EVout**/
+    cp_eq_EV = cpa + Ya_EVin * cpv / 1000;
+    Tr_EV_max = Ta_EVin_DEW - (Ta_EVin - Ta_EVin_DEW) / (exp(Lx_EV * Uo_EVdry / cp_eq_EV / roua / ua_EV / la_EV) - 1);
+    Tr_EV_try1 = min(Ta_EVout - 6, Tr_EV_max - 6);
+    Tr_EV_try2 = min(Ta_EVout - 2, Tr_EV_max - 2);
+    flag_Tr_EV = 1;
+    times_Tr_EV = 0;
+    cout<<endl;
+    while (flag_Tr_EV){
+        Lx_EVdry = cp_eq_EV * roua * ua_EV * la_EV / Uo_EVdry * log((Ta_EVin - Tr_EV_try1) / (Ta_EVin_DEW - Tr_EV_try1));
+        Ta_EVout_try1 = (Ta_EVin_DEW - Tr_EV_try1) * exp( - Uo_EVwet / roua / ua_EV / cp_eq_EV / la_EV * (Lx_EV - Lx_EVdry)) + Tr_EV_try1;
+        cout<<"Iteration Tr_EV!!!"<<'\t'<<Tr_EV_try1<<'\t'<<Lx_EVdry<<'\t'<<Ta_EVout_try1;
+        Lx_EVdry = cp_eq_EV * roua * ua_EV * la_EV / Uo_EVdry * log((Ta_EVin - Tr_EV_try2) / (Ta_EVin_DEW - Tr_EV_try2));
+        Ta_EVout_try2 = (Ta_EVin_DEW - Tr_EV_try2) * exp( - Uo_EVwet / roua / ua_EV / cp_eq_EV / la_EV * (Lx_EV - Lx_EVdry)) + Tr_EV_try2;
+        cout<<'\t'<<Tr_EV_try2<<'\t'<<Lx_EVdry<<'\t'<<Ta_EVout_try2;
+        if (fabs(Ta_EVout_try2 -  Ta_EVout) / Ta_EVout < 1e-5) flag_Tr_EV = 0;
+        Tr_EV_temp = fabs((Ta_EVout_try1- Ta_EVout) < (Ta_EVout_try2 - Ta_EVout)) ? Tr_EV_try1 : Tr_EV_try2;
+        Tr_EV_try2 = (Ta_EVout - Ta_EVout_try1) / (Ta_EVout_try2 - Ta_EVout_try1) * (Tr_EV_try2 - Tr_EV_try1) + Tr_EV_try1;
+        Tr_EV_try1 = Tr_EV_temp;
+        while (Tr_EV_try1 > Tr_EV_max) Tr_EV_try1--;
+        times_Tr_EV++;
+        cout<<'\t'<<Ta_EVout<<'\t'<<Tr_EV_try2<<'\t'<<times_Tr_EV<<endl;
+    }
+    Tr_EV = Tr_EV_try2;
+    cout<<endl;
+
+    /**3.2.1 冷凝侧热阻，输入几何参数，ua_CD**/
+    hs_CD = Update_Hs(ntx_CD, nf_CD, ntz_CD,la_CD, ua_CD);
+    hr_CD = hr_EV;
+    m_CD = sqrt(2 * hs_CD / kf / tf);
+    c_Bessel_CD = (second_modified_Bessel(1,m_CD * r1) * first_modified_Bessel(1,m_CD * r2) - first_modified_Bessel(1,m_CD * r1) * second_modified_Bessel(1,m_CD * r2)) /(first_modified_Bessel(0,m_CD * r1) * second_modified_Bessel(1,m_CD * r2) + second_modified_Bessel(0,m_CD * r1) * first_modified_Bessel(1,m_CD * r2));
+    yt_CD = 2 * r1 / m_CD / (pow(r2,2) - pow(r1,2)) * c_Bessel_CD;
+    Uo_CD = 1 /(Ao_CD / hr_CD / Ati_CD + Ao_CD * log(ro/ri) / 2 / pi / kt / lt_CD + 1 / hs_CD / (Ato_CD / Ao_CD + Afo_CD * yt_CD / Ao_CD));
+    cout<<"CD heat transfer resistance!"<<'\t'<<hs_CD<<'\t'<<m_CD<<'\t'<<c_Bessel_CD<<'\t'<<yt_CD<<'\t'<<Uo_CD<<endl;
+
+    /**3.2.2 迭代冷凝温度**/
+    flag_Tr_CD = 1;
+    times_Tr_CD = 0;
+    Tr_CD_try = max(Tr_EV + 60, Ta_CDin + 10);
+    cout<<endl;
+    while (flag_Tr_CD){
+
+        /**3.1.4 蒸发侧制冷剂循环**/
+        pr_EVin = 1000 * SaturatedGPT(Tr_EV);
+        Gr_try = 500 * pi * pow(ri,2);
+        flag_Gr = 1, times_Gr = 0;
+        while (flag_Gr){
+            xr_EVin_try = 0.2;
+            flag_xr = 1, times_xr = 0;
+            while (flag_xr){
+                pr_EVout = pr_EVin - Update_dltPr(Tr_EV, Gr_try, xr_EVin_try) * lt_EV;
+                ir_EVout = 1000 * SuperHeatedHT(pr_EVout, Tr_EV + 5);
+                pr_CDout = 1000 * SaturatedLPT(Tr_CD_try);
+                ir_CDout = 1000 * SubCooledHT(pr_CDout, Tr_CD_try - 10);
+                xr_EVin = TwoPhaseXH(ir_CDout, pr_EVout);
+                if (fabs(xr_EVin_try - xr_EVin) < 1e-2) flag_xr = 0;
+                xr_EVin_try = xr_EVin;
+                times_xr++;
+            }
+
+
+            sr_EVout = 1000 * SuperHeatedST(pr_EVout, Tr_EV + 5);
+            pr_CDin = pr_CDout + Update_dltPr(Tr_CD_try, Gr_try, 0) * lt_CD;
+            Tr_CMout_ideal = SuperHeatedTS(pr_CDin, sr_EVout / 1000) - 273.15;
+            ir_CMout_ideal = 1000 * SuperHeatedHT(pr_CDin, Tr_CMout_ideal);
+            ir_CMout = (ir_CMout_ideal - ir_EVout) / yt_CM + ir_EVout;
+            Tr_CMout = SuperHeatedTH(pr_CDin, ir_CMout) - 273.15;
+            Gr = Ga_EV * (ia_EVin - ia_EVout) / (ir_EVout - ir_CDout);
+            if (fabs((Gr_try - Gr) / Gr) < 1e-2) flag_Gr = 0;
+            Gr_try = Gr;
+            times_Gr++;
+        }
+        //cout<<"EV refrigerant condition!"<<'\t'<<Tr_EV<<'\t'<<pr_EVout<<'\t'<<ir_EVout<<'\t'<<sr_EVout<<'\t'<<pr_EVin<<endl;
+        Qr_CD = Gr * (ir_CMout - ir_CDout);
+        cp_eq_CD = cpa + Ya_CDin / 1000 * cpv;
+        Tr_CD = Qr_CD / Ga_CD / cp_eq_CD / (1 - exp( - Uo_CD * Lx_CD / roua / ua_CD / cp_eq_CD / la_CD)) + Ta_CDin;
+        //cout<<"Iteration Tr_CD!!!"<<'\t'<<pr_CDout<<'\t'<<ir_CDout<<'\t'<<ir_CMout<<'\t'<<Gr / pi / pow(ri,2)<<'\t'<<Qr_CD<<'\t'<<Tr_CD<<'\t'<<Tr_CD_try<<'\t'<<times_Tr_CD<<endl;
+        while(fabs((Tr_CD_try - Tr_CD) / Tr_CD) < 1e-5) {flag_Tr_CD = 0;break;}
+        Tr_CD_try = Tr_CD / 2 + Tr_CD_try / 2;
+        times_Tr_CD ++;
+    }
+    Tr_CD = Tr_CD_try;
+    cout<<endl;
+
+    /**4.各部件功耗及火用损**/
+    /**4.1 混风器1-蒸发器前**/
+
+    Psat_OA = T2Psat(T_OA);
+    Y_OA_sat = 622 / (Patm / Psat_OA - 1);
+    EXa_RA_EV = (1 - OA_ratio_EV) * Ga_EV * ((cpa + Y_RA / 1000 * cpv) * (T_OA + 273.15) * ((T_RA + 273.15) / (T_OA + 273.15) - 1 - log((T_RA + 273.15) / (T_OA + 273.15))) + 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Y_RA / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Y_RA / 1000)) + 1.608 * Y_RA / 1000 * log(Y_RA / Y_OA_sat)));
+    EXa_OA_EV = OA_ratio_EV * Ga_EV * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Y_OA / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Y_OA / 1000)) + 1.608 * Y_OA / 1000 * log(Y_OA / Y_OA_sat));
+    EXa_EVin = Ga_EV * (cpa + Ya_EVin / 1000 * cpv) * (T_OA + 273.15) * ((Ta_EVin + 273.15) / (T_OA + 273.15) - 1 - log((Ta_EVin + 273.15) / (T_OA + 273.15))) + Ga_EV * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Ya_EVin / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Ya_EVin / 1000)) + 1.608 * Ya_EVin / 1000 * log(Ya_EVin / Y_OA_sat));
+    dltEX_mix1 = EXa_RA_EV + EXa_OA_EV - EXa_EVin;
+
+    /**4.2 蒸发器**/
+
+    ir_ref = 1000 * SuperHeatedHT(Patm, T_OA);
+    sr_ref = 1000 * SuperHeatedST(Patm, T_OA);
+    sr_EVin = 1000 * TwoPhaseSH(ir_CDout, pr_EVin);
+    EXr_EVin = Gr * (ir_CDout - (T_OA + 273.15) * sr_EVin - ir_ref + (T_OA + 273.15) * sr_ref);
+    EXa_EVout = Ga_EV * (cpa + Ya_EVout / 1000 * cpv) * (T_OA + 273.15) * ((Ta_EVout + 273.15) / (T_OA + 273.15) - 1 - log((Ta_EVout + 273.15) / (T_OA + 273.15))) + Ga_EV * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Ya_EVout / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Ya_EVout / 1000)) + 1.608 * Ya_EVout / 1000 * log(Ya_EVout / Y_OA_sat));
+    EXr_EVout = Gr * (ir_EVout - (T_OA + 273.15) * sr_EVout - ir_ref + (T_OA + 273.15) * sr_ref);
+    EXw_EVout = Ga_EV * (Ya_EVin - Ya_EVout) / 1000 * cpw * (T_OA + 273.15) * ((Ta_EVout + 273.15) / (T_OA + 273.15) - 1 - log((Ta_EVout + 273.15) / (T_OA + 273.15)));
+    dltEX_EV = EXa_EVin + EXr_EVin - EXa_EVout - EXr_EVout - EXw_EVout;
+
+    /**混风器2-冷凝器前**/
+
+    EXa_RA_CD = RA_ratio_CD * Ga_CD * ((cpa + Y_RA / 1000 * cpv) * (T_OA + 273.15) * ((T_RA + 273.15) / (T_OA + 273.15) - 1 - log((T_RA + 273.15) / (T_OA + 273.15))) + 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Y_RA / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Y_RA / 1000)) + 1.608 * Y_RA / 1000 * log(Y_RA / Y_OA_sat)));
+    EXa_OA_CD = (1 - RA_ratio_CD) * Ga_CD * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Y_OA / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Y_OA / 1000)) + 1.608 * Y_OA / 1000 * log(Y_OA / Y_OA_sat));
+    EXa_CDin = Ga_CD * (cpa + Ya_CDin / 1000 * cpv) * (T_OA + 273.15) * ((Ta_CDin + 273.15) / (T_OA + 273.15) - 1 - log((Ta_CDin + 273.15) / (T_OA + 273.15))) + Ga_CD * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Ya_CDin / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Ya_CDin / 1000)) + 1.608 * Ya_CDin / 1000 * log(Ya_CDin / Y_OA_sat));
+    dltEX_mix2 = EXa_RA_CD + EXa_OA_CD - EXa_CDin;
+
+    /**冷凝器**/
+
+    sr_CMout = 1000 * SuperHeatedST(pr_CDin,Tr_CMout);
+    sr_CDout_sat = 1000 * SaturatedLST(Tr_CD);
+    sr_CDout = sr_CDout_sat + SubCooledCpT(pr_CDin, Tr_CD - 5) * log((Tr_CD + 263.15)/(Tr_CD + 273.15));
+    EXr_CDin = Gr * (ir_CMout - (T_OA + 273.15) * sr_CMout - ir_ref + (T_OA + 273.15) * sr_ref);
+    EXr_CDout = Gr * (ir_CDout - (T_OA + 273.15) * sr_CDout - ir_ref + (T_OA + 273.15) * sr_ref);
+    Ta_CDout = Qr_CD / cp_eq_CD / Ga_CD + Ta_CDin;
+    EXa_CDout = Ga_CD * (cpa + Ya_CDin / 1000 * cpv) * (T_OA + 273.15) * ((Ta_CDout + 273.15) / (T_OA + 273.15) - 1 - log((Ta_CDout + 273.15) / (T_OA + 273.15))) + Ga_CD * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Ya_CDin / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Ya_CDin / 1000)) + 1.608 * Ya_CDin / 1000 * log(Ya_CDin / Y_OA_sat));
+    dltEX_CD = EXa_CDin + EXr_CDin - EXa_CDout - EXr_CDout;
+    cout<<"CHECK!!"<<'\t'<<Tr_CD<<'\t'<<pr_CDin<<'\t'<<SubCooledCpT(pr_CDin, Tr_CD)<<'\t'<<sr_CDout_sat<<'\t'<<sr_CDout<<endl;
+
+    /**压缩机**/
+    P_CM = Gr * (ir_CMout - ir_EVout) / ytele_CM;
+    dltEX_CM = P_CM + EXr_EVout - EXr_CDin;
+
+    /**膨胀阀**/
+
+    dltEX_TV = EXr_CDout - EXr_EVin;
+
+    /**再热器**/
+
+    EXa_SA = Ga_EV * (cpa + Ya_EVout / 1000 * cpv) * (T_OA + 273.15) * ((T_SA + 273.15) / (T_OA + 273.15) - 1 - log((T_SA + 273.15) / (T_OA + 273.15))) + Ga_EV * 8.314e3 / 29 * (T_OA + 273.15) * ((1 + 1.608 * Ya_EVout / 1000) * log((1 + 1.608 * Y_OA_sat / 1000)/(1 + 1.608 * Ya_EVout / 1000)) + 1.608 * Ya_EVout / 1000 * log(Ya_EVout / Y_OA_sat));
+    dltEX_HT = EXa_EVout - EXa_SA;
+
+    /**风机**/
+    P_DF_EV = Ga_EV / roua * (Update_dltP(ntx_EV, nf_EV, ntz_EV, la_EV, ua_EV, Ga_EV) + roua * pow(ua_EV, 2)) / yt_DF;
+    P_DF_CD = Ga_CD / roua * (Update_dltP(ntx_CD, nf_CD, ntz_CD, la_CD, ua_CD, Ga_CD) + roua * pow(ua_CD, 2)) / yt_DF;
+
+    cout<<endl;
+    cout<<"RESULTS"<<endl;
+    cout<<"INPUT"<<'\t'<<P_CM<<'\t'<<EXa_OA_CD<<'\t'<<EXa_RA_CD<<'\t'<<EXa_OA_EV<<'\t'<<EXa_RA_EV<<'\t'<<P_CM + EXa_RA_CD + EXa_RA_EV + EXa_OA_CD + EXa_OA_EV<<endl;
+    cout<<"OUTPUT"<<'\t'<<EXa_SA<<'\t'<<EXw_EVout<<'\t'<<EXa_CDout<<'\t'<<EXa_SA + EXw_EVout + EXa_CDout<<endl;
+    cout<<"CM DISSPI"<<'\t'<<dltEX_CM<<endl;
+    cout<<"CD DISSPI"<<'\t'<<dltEX_mix2<<'\t'<<dltEX_CD<<'\t'<<dltEX_mix2 + dltEX_CD<<endl;
+    cout<<"TV DISSPI"<<'\t'<<dltEX_TV<<endl;
+    cout<<"EV DISSPI"<<'\t'<<dltEX_mix1<<'\t'<<dltEX_EV<<'\t'<<dltEX_mix1 + dltEX_EV<<endl;
+    cout<<"HT DISSPI"<<'\t'<<dltEX_HT<<endl;
+    cout<<"OUTPUT+DISSPI"<<'\t'<<EXa_SA + EXw_EVout + EXa_CDout + dltEX_CM + dltEX_mix2 + dltEX_CD + dltEX_TV + dltEX_mix1 + dltEX_EV + dltEX_HT<<endl;
+    cout<<"FAN INPUT"<<'\t'<<P_DF_CD<<'\t'<<P_DF_EV<<'\t'<<endl;
+    cout<<"ELECTRICITY COMSU"<<'\t'<<P_DF_CD + P_DF_EV + P_CM<<endl;
+
+    outfile<<ua_EV<<'\t'<<ua_CD<<'\t'<<U_ratio<<'\t'<<Tr_EV<<'\t'<<Tr_CD<<'\t'<<P_CM<<'\t'<<P_DF_CD + P_DF_EV + P_CM;
+    outfile<<'\t'<<P_CM<<'\t'<<P_DF_CD<<'\t'<<P_DF_EV<<'\t'<<0<<'\t'<<EXa_OA_CD<<'\t'<<EXa_RA_CD<<'\t'<<EXa_OA_EV<<'\t'<<EXa_RA_EV;
+    outfile<<'\t'<<EXa_SA<<'\t'<<EXa_CDout<<'\t'<<dltEX_CM<<'\t'<<dltEX_TV<<'\t'<<dltEX_EV<<'\t'<<dltEX_CD<<'\t'<<dltEX_mix1<<'\t'<<dltEX_mix2<<'\t'<<dltEX_HT<<'\t'<<0<<'\t'<<P_DF_EV<<'\t'<<P_DF_CD<<'\t'<<EXw_EVout<<endl;
+    //cout<<hs_EV<<'\t'<<hs_CD<<endl;
+
+    //cout<<xr_EVin<<'\t'<<endl;
+    }
+    }
+
+    outfile.close();
+    return 0;
+}
+
+inline double T2Psat(double T){
+    double Psat;
+    Psat = exp(-5800.2206 / (T + 273.15) + 1.3914993 - 0.048640239 * (T + 273.15) + 0.000041764768 * pow(T + 273.15,2) - 0.000000014452093 * pow(T + 273.15,3) + 6.5459673 * log(T + 273.15));
+    return Psat;
+}
+
+inline double Psat2T(double Psat){
+
+    bool flag_Psat;
+    int times_Psat;
+    double T_try1, T_try2, Psat_try1, Psat_try2, T_temp;
+
+    T_try1 = 5, T_try2 = 6;
+    flag_Psat = 1, times_Psat = 0;
+    cout<<endl;
+    while (flag_Psat){
+       Psat_try1 = T2Psat(T_try1), Psat_try2 = T2Psat(T_try2);
+       flag_Psat = (fabs((Psat_try2 - Psat)/Psat) < 1e-8) ? 0 : 1;
+       T_temp = (fabs(Psat_try1 - Psat) < fabs(Psat_try2 - Psat)) ? T_try1 : T_try2;
+       T_try2 = T_try1 + (Psat - Psat_try1) / (Psat_try2 - Psat_try1) * (T_try2 - T_try1);
+       T_try1 = T_temp;
+       times_Psat++;
+       //cout<<"Iteration Psat2T!!!"<<'\t'<<Psat_try1<<'\t'<<Psat_try2<<'\t'<<T_try1<<'\t'<<T_try2<<'\t'<<flag_Psat<<'\t'<<times_Psat<<endl;
+    }
+    cout<<endl;
+    return T_try2;
+
+}
+
+inline double Update_Hs(int ntx, int nf, int ntz, double la,double ua){
+
+    double d1, d2;
+    double Amin, Af;
+    double Dh, dc;
+    double Umax, REa, PRa;
+    double c3, c4, c5, c6, j;
+    double hs;
+
+    d1 = dlz - 2 * ro;
+    d2 = 2 * (pow(pow(dlz / 2, 2) + pow(dlx, 2), 0.5) - 2 * ro);
+    if(d1 < d2) Amin = nf * Pf * (1 - tf / Pf) * ((ntz - 1) * d1 + d1);
+    else Amin = nf * Pf * (1 - tf / Pf) * ((ntz - 1) * d2 + d1);
+    Af = nf * Pf * dlz * ntz;
+
+    Dh = 4 * Amin * la / Af;
+    dc = 2 * ro + 2 * tf;
+
+    Umax = ua * Af / Amin;
+    REa = roua * Umax * dc / mua;
+    PRa = mua * cpa / ka;                                                              /**普朗克常数：定义式**/
+
+    c3 = - 0.361 - 0.042 * ntx / log(REa) + 0.158 * log(ntx * pow(Pf / dc, 0.41));
+    c4 = - 1.224 - 0.076 * pow(dlx / Dh, 1.42) / log(REa);
+    c5 = - 0.083 + 0.058 * ntx / log(REa);
+    c6 = - 5.735 + 1.21 * log(REa / ntx);
+    j = 0.086 * pow(REa, c3) * pow(ntx, c4) * pow(Pf / dc, c5) * pow(Pf / Dh, c6) * pow(Pf / dlz, -0.93);
+
+    hs = j / pow(PRa, 2.0 / 3) * roua * Umax * cpa;
+
+    return hs;
+
+}
+
+inline double Update_dltP(int ntx, int nf, int ntz, double la, double ua, double Ga){
+
+    double d1, d2;
+    double Amin, Af;
+    double Dh, dc;
+    double Umax, REa;
+    double f_F;
+    double c7, c8, c9;
+    double dltP1, dltP2, dltP;
+
+    d1 = dlz - 2 * ro;
+    d2 = 2 * (pow(pow(dlz / 2, 2) + pow(dlx, 2), 0.5) - 2 * ro);
+    if(d1 < d2) Amin = nf * Pf * (1 - tf / Pf) * ((ntz - 1) * d1 + d1);
+    else Amin = nf * Pf * (1 - tf / Pf) * ((ntz - 1) * d2 + d1);
+    Af = nf * Pf * dlz * ntz;
+
+    Dh = 4 * Amin * la / Af;
+    dc = 2 * ro + 2 * tf;
+
+    Umax = ua * Af / Amin;
+    REa = roua * Umax * dc / mua;
+
+    c7 = - 0.764 + 0.739 * (dlz / dlx) + 0.177 * Pf / dc - 0.00758 / ntz;
+    c8 = - 15.689 + 64.021 / log(REa);
+    c9 = 1.696 - 15.695 / log(REa);
+    f_F = 0.0267 * pow(REa, c7) * pow(dlx / dlz, c8) * pow (Pf / dc, c9);
+    dltP1 = 4 * pow(Ga / Amin,2) / 2 / roua * f_F * dlx * ntx / Dh;
+
+    //cout<<dltP1<<'\t'<<4 * f_F * dlx * ntx / Dh<<endl;
+
+    return dltP1;
+
+}
+inline double Update_dltPr(double Tr, double Gr, double xr_start){
+
+    int i, N;
+    double dltPr, dltPr_avg;
+    N = 100;
+    dltPr_avg = 0;
+    for (i = 1;i <= N; i++){
+        dltPr = Update_Frict_TwoPhase(Tr, Gr, xr_start + (1.0 - xr_start) / N * i);
+        dltPr_avg = dltPr_avg + dltPr / N;
+    }
+    //cout<<dltPr<<'\t'<<dltPr_avg<<endl;
+    return dltPr_avg;
+}
+inline double Update_Frict_TwoPhase(double Tr, double Gr, double xr){
+
+    double mr;
+    double uL, uG, rouL, rouG;
+    double fL, REL, FRL, fFR, dltpL_Z, dltpFr_Z, fyrGD;
+    double dltpr_Frict_Z;
+
+    mr = Gr /  pi / pow(ri,2);
+
+    uL = SaturatedLUT(Tr), uG = SaturatedGUT(Tr);
+    rouL = SaturatedLRouT(Tr), rouG = SaturatedGRouT(Tr);
+
+    REL = 2 * ri * mr / uL;
+    fL = 0.079 / pow(REL, 0.25);
+    dltpL_Z = fL * pow(mr, 2) / rouL / ri;
+
+    FRL = pow(mr, 2) / (2 * ri * g * pow(rouL,2));
+    if(FRL >= 1) fFR = 1;
+    else fFR = pow(FRL, 0.3) + 0.0055 * pow(log(1 / FRL), 2);
+    dltpFr_Z = fFR * (xr + 4 * (pow(xr, 1.8) - pow(xr, 10) * pow(fFR, 0.5)));
+    fyrGD = 1 + dltpFr_Z * (rouL / rouG / pow(uL / uG, 0.25) - 1);
+    dltpr_Frict_Z = fyrGD * dltpL_Z;
+    return dltpr_Frict_Z;
+
+}
+
+/**************************************************************************************************************************************************/
+double SuperHeatedCpT(double pr, double Tr){
+    double cp;
+    cp = 1e5 * (SuperHeatedHT(pr,Tr + 0.01) - SuperHeatedHT(pr,Tr));
+    //cout<<cp<<endl;
+    return cp;
+}
+
+double SubCooledCpT(double pr, double Tr){
+    double cp;
+    cp = 1e5 * (SubCooledHT(pr,Tr) - SubCooledHT(pr,Tr - 0.01));
+    //cout<<cp<<endl;
+    return cp;
+}
+
+inline double SaturatedLUT(double Tr){
+    double uL;
+    uL = 2.38792070e-13 * pow(Tr, 4) - 1.04671492e-10 * pow(Tr, 3) + 1.81435101e-8 * pow(Tr, 2) - 2.77644014e-6 * Tr + 2.42638774e-4;
+    return uL;
+}
+
+inline double SaturatedGUT(double Tr){
+    double uG;
+    uG = -2.77476699e-15 * pow(Tr, 5) + 5.57460712e-13 * pow(Tr, 4) - 3.25865533e-11 * pow(Tr, 3) + 7.45101326e-10 * pow(Tr, 2) + 3.47247943e-8 * Tr + 1.11536344e-5;
+    return uG;
+}
+
+
+
